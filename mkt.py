@@ -129,7 +129,7 @@ def _escape(string):
     for i, c in enumerate(string):
         if c in ESCAPABLE:
             string[i] = '\\' + c
-    return ''.join(string)
+    return "".join(string)
 
 def _find_unescaped(haystack, needle, start = 0):
     """find the unescaped needle in the haystack"""
@@ -229,13 +229,13 @@ def _unescape(string):
         if string[i] == '\\': # skip the next character
             del string[i]
         i += 1
-    return ''.join(string)
+    return "".join(string)
 
 class Macro:
     """macro parsing"""
 
-    def __init__(self, macro = ''):
-        self.definition = ''
+    def __init__(self, macro = ""):
+        self.definition = ""
         self.macro = macro
         index = _find_unescaped(macro, '=')
 
@@ -245,7 +245,7 @@ class Macro:
         self.definition = self.definition.strip()
         self.macro = self.macro.strip()
 
-    def expand(self, string = ''):
+    def expand(self, string = ""):
         """expand the current macro in a string"""
         definition = _escape(self.definition)
         expansion = "(%s)" % _escape(self.macro)
@@ -266,8 +266,8 @@ class Option:
     this class doesn't validate the subsequent commands
     """
 
-    def __init__(self, option = ''):
-        self.commands = ''
+    def __init__(self, option = ""):
+        self.commands = ""
         self.opts = []
         options = list(_split_unescaped(option, '\n', 1))
 
@@ -304,7 +304,7 @@ class Option:
 class Path:
     """path parser"""
 
-    def __init__(self, path = ''):
+    def __init__(self, path = ""):
         self.dest = path
         self.src = path
 
@@ -363,13 +363,13 @@ class Path:
         if self.dest:
             as_list.append('>')
             as_list.append(_escape(self.dest))
-        return ''.join(as_list)
+        return "".join(as_list)
 
 class Template:
     """template parsing"""
     
-    def __init__(self, path = ''):
-        template = ''
+    def __init__(self, path = ""):
+        template = ""
 
         with open(path, "rb") as fp:
             template = fp.read()
@@ -453,7 +453,7 @@ class Template:
         return '\n'.join((str(e) for e in (self.macros + self.paths
             + self.options)))
     
-    def _strip_comment(self, line = ''):
+    def _strip_comment(self, line = ""):
         """remove the comment from a line"""
         index = _find_unescaped(line, '#')
 
