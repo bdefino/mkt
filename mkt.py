@@ -402,7 +402,8 @@ class TemplateParser:
                         script.append(line)
                     i += 1
                 ops.append(TemplateOption(os.linesep.join(
-                    [normalize_component(l) for l in script]), *names))
+                    [normalize_component(l) for l in script]),
+                    *[normalize_component(n) for n in names]))
             else: # path
                 if stripped == '>':
                     i += 1
