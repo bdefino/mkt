@@ -22,182 +22,170 @@ import sys
 __doc__ = """
 mkt - MaKe a Template
 
-a template is a line-based build/packaging format which consists of
-comments, macros, options, and paths
+originally intended to build projects with decentralized files,
+mkt is now primarily geared towards versatility and readability
 
-templates use the standard ASCII character set, but reserve the '\n', '#',
-'(', ')', ',', '>', and '\\' characters;
-to escape one of these characters, it must be immediately prefaced
-with a backslash character: the only exception being ')',
-which doesn't need to be escaped;
-this behavior may also be used for line extension
-e.g.
-    not a comment # comment?
-    \# comment?
-    \(macro?)
-    line 1 \
-    line 2
-becomes
-    not a comment
-    # comment?
-    (macro?)
-    line 1 line 2
+mkt deals exclusively with line-based template files
 
-comments are prefaced with the pound sign, and may occur at any point
-within a line
-e.g.
-    # this line is commented
-    some other line # I'm a comment
-is interpreted as
-    some other line
+any line may include comments and/or escape characters;
+comment syntax:
+    my line#my comment
+evaluates as:
+    my line
+escape syntax:
+    my line\#my \\comment
+evaluates as:
+    my line#my \comment
+escape characters may also be used to wrap lines
 
-macros are declared using the equals sign,
-and are expanded by wrapping their case-and-space-sensitive names
-with parentheses
-e.g.
-    my macro=some value
+there are 3 major types of sections: preprocessor, path, and option
+
+preprocessor lines consist of macros,
+and are ALWAYS processed individually (in sequence) EXACTLY ONCE;
+definition syntax:
+    my macro=some definition
+expansion syntax:
     (my macro)
-    (mY mAcRo)
-    ( my macro )
-becomes
-    my macro=some value
-    some value
-    (mY mAcRo)
-    ( my macro )
-there are two special macro names: "title" and "wd", which repectively define
-a template's title and the working directory to find source files
 
-options are comma-separated (and need at least one comma to be recognized),
-and may contain muliple occurences
-and redefinitions of option values;
-every non-empty line following the option is considered a command,
-so long as it begins with a whitespace character
-e.g.
-    opt,
-        my command
-executes "my command" whenever the option "opt" is supplied
+path lines are for packaging (AKA populating),
+and are only executed by the -p or --populate arguments;
+relative paths are assumed relative to the template directory;
+path syntax:
+    my path>another path
+    my other path
+copies "my path" to "another path" and "my other path" to "my other path"
 
-paths are lines which don't match either the macro or option conventions;
-the greater than sign may be used to redefine a path
-e.g.
-    path/to/file
-    path/to/file>
-    path/to/file>new/local/path
-is equivalent to
-    cp (wd)/path/to/file other-directory/
-    cp (wd)/path/to/file other-directory/
-    cp (wd)/path/to/file other-directory/new/local/path
-when an the source is absolute, and matches the destination, the basename
-component is used as the destination;
-when the destination path is absolute, and differs from the source path,
-a SyntaxError is raised
-e.g.
-    /absolute/path
-    /absolute/path>/other/absolute/path
-    /absolute/path>relative/path
-is equivalent to
-    cp /absolute/path other-directory/path
-    SyntaxError
-    cp /absolute/path other-directory/relative/path
-file globbing is only evaluated when the source path contains globbing;
-if the source path uses file globbing and the destination path has no
-globbing in its basename component (after the final slash),
-a SyntaxError is raised;
-when the destination path uses file globbing, and any non-asterisk characters
-are present, the basename becomes a single asterisk (i.e. accepts all globbed
-paths)
-e.g.
-    path/to/files/*
-    path/to/files/*>new/local/path
-    path/to/files/*>new/local/paths*
-is interpreted as
-    cp (wd)/path/to/files/* other-directory/path/to/files/*
-    SyntaxError
-    cp (wd)/path/to/files/* other-directory/new/local/*
+option lines specify user-defined shell commands,
+which are processed in the order that they are supplied by the caller;
+option syntax:
+    my name, other name:
+        shell command
+        other shell command
+this evaluates
+        shell command
+        other shell command
+(including leading whitespace) if either "my name"
+or "other name" were passed by the caller;
+note that all until a line without leading whitespace is encountered,
+all subsequent lines are considered a part of the option
+
+sample template:
+    title=mkt
+    wd=.
+    
+    COPYING
+    mkt.py
+    README.md
+    
+    b, build:
+        python -c "import mkt" # creates mkt.pyc
+    c, clean:
+        rm *.pyc
+    i, install: # simple shell alias
+        alias (title)="python $\(realpath mkt.py)" # useful escape example
 """
 
-global ESCAPABLE
-ESCAPABLE = "#(,>\\"
-
-global RESERVED # for the sake of clarity
-RESERVED = "\n#(),>\\"
-
-def _escape(string):
-    """escape a string"""
-    string = list(string)
-
-    for i, c in enumerate(string):
-        if c in ESCAPABLE:
-            string[i] = '\\' + c
-    return "".join(string)
-
-def _find_unescaped(haystack, needle, start = 0):
-    """find the unescaped needle in the haystack"""
-    for i in range(start, len(haystack)):
-        if (haystack[i:i + len(needle)] == needle
-                and (i == 0 or not haystack[i - 1] == '\\')):
-            return i
-    return -1
-
 def _help():
-    """print a help message"""
-    print "MaKe a Template (into the CWD)\n" \
-          "Usage: python mkt.py [OPTIONS] PATH\n" \
-          "OPTIONS\n" \
-          "\t-h, --help\tdisplay this text\n" \
-          "\t-o, --overwrite\toverwrite the destination if it exists\n" \
-          "\ttemplate-specific options are also acceptable\n" \
-          "PATH\n" \
-          "\ttemplate path"
+    """print help text"""
+    print "mkt - MaKe a Template\n" \
+        "Usage: python mkt.py [OPTIONS] [TEMPLATES] [USER-DEFINED-OPTIONS]\n" \
+        "OPTIONS\n" \
+        "\t-g, --noglob\tignore globbing syntax in TEMPLATE\n" \
+        "\t-h, --help\tdisplay this test and exit\n" \
+        "\t-p, --populate[=PATH]\tpopulate PATH (if present) or the CWD\n" \
+        "TEMPLATES\n" \
+        "\tthe templates to execute\n" \
+        "\tif omitted, all files in the CWD matching *.mkt are used\n" \
+        "USER-DEFINED-OPTIONS\n" \
+        "\toptions to execute within templates\n" \
+        "\tthese are executed in the order they are passed,\n" \
+        "\tnot the order the appear in each template"
 
 def main():
-    """populate and execute the necessary options"""
+    """execute from the command line"""
     dest = os.getcwd()
-    i = 1
-    options = []
-    overwrite = False
-    src = None
+    no_glob = False
+    populate = []
+    template = None
+    templates = []
+    to_sort = [] # templates and user defined options
+    user_defined_options = []
 
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-        used = False
+    for i in range(1, len(sys.argv)):
+        a = sys.argv[i]
+        
+        if a.startswith("--"):
+            stripped = a[2:]
 
-        if arg.startswith("--"):
-            _arg = arg[2:]
-
-            if _arg == "help":
+            if stripped == "help":
                 _help()
                 sys.exit()
-            elif _arg == "overwrite":
-                overwrite = True
-            else: # unused
-                options.append(arg)
-        elif arg.startswith('-'):
-            for c in arg[1:]:
-                if c == 'h':
+            elif stripped == "noglob":
+                no_glob = True
+            elif stripped == "populate":
+                populate.append(os.getcwd())
+            elif stripped.startswith("populate="):
+                path = stripped[9:]
+
+                if path[0] in ('\'', '\"') and path[0] == path[-1]:
+                    path = path[1:-1]
+                populate.append(path)
+            else:
+                to_sort.append(a)
+        elif a.startswith('-'):
+            _i = 1
+
+            while _i < len(a):
+                if a[_i] == 'g':
+                    no_glob = True
+                elif a[_i] == 'h':
                     _help()
                     sys.exit()
-                elif c == 'o':
-                    overwrite = True
-                    used = True
-
-            if not used:
-                options.append(arg)
-        elif not src and os.path.exists(arg):
-            src = arg
+                elif a[_i] == 'p':
+                    if _i == len(a) - 1:
+                        populate.append(os.getcwd())
+                    else:
+                        populate.append(a[_i + 1:])
+                        break
+                _i += 1
         else:
-            options.append(arg)
-        i += 1
+            to_sort.append(a)
 
-    if not src:
-        print "Missing source."
-        _help()
-        sys.exit()
-    template = Template(src)
-    template.execute(template.populate(os.getcwd(), overwrite), options)
+    for e in to_sort:
+        if no_glob:
+            if os.path.exists(e):
+                templates.append(e)
+            else:
+                user_defined_options.append(e)
+        else:
+            globbed = glob.glob(e)
 
-def _sha256_file(path, buflen = 1048576):
-    """return the SHA-256 hash for a file"""
+            if globbed:
+                templates += globbed
+            else:
+                user_defined_options.append(e)
+
+    if not templates:
+        templates = glob.glob("*.mkt")
+
+        if not templates:
+            _help()
+            sys.exit()
+    
+    for path in templates:
+        with open(path, "rb") as fp:
+            template = TemplateParser.parse(fp.read())
+        
+        if populate:
+            for p in populate:
+                template.populate(p, os.path.dirname(path))
+                template.execute_options(user_defined_options, p)
+        else:
+            template.execute_options(user_defined_options,
+                os.path.dirname(path))
+
+def sha256file(path, buflen = 2 ** 24):
+    """return the SHA-256 hash of a file"""
     sha256 = hashlib.sha256()
 
     with open(path, "rb") as fp:
@@ -208,258 +196,305 @@ def _sha256_file(path, buflen = 1048576):
             chunk = fp.read(buflen)
     return sha256.hexdigest()
 
-def _split_unescaped(haystack, needle, n = -1):
-    """split haystack around unescaped occurences of needle up to n times"""
-    index = _find_unescaped(haystack, needle)
-    last = 0
-    
-    while index > -1 and not n == 0: # n < 0 -> find all
-        yield haystack[last:index]
-        last = index + len(needle)
-        index = _find_unescaped(haystack, needle, last)
-        n -= 1
-    yield haystack[last:]
-
-def _unescape(string):
-    """unescape a string"""
-    i = 0
-    string = list(string)
-
-    while i < len(string):
-        if string[i] == '\\': # skip the next character
-            del string[i]
-        i += 1
-    return "".join(string)
-
-class Macro:
-    """macro parsing"""
-
-    def __init__(self, macro = ""):
-        self.definition = ""
-        self.macro = macro
-        index = _find_unescaped(macro, '=')
-
-        if index > -1:
-            self.definition = _unescape(macro[index + 1:])
-            self.macro = _unescape(macro[:index])
-        self.definition = self.definition.strip()
-        self.macro = self.macro.strip()
-
-    def expand(self, string = ""):
-        """expand the current macro in a string"""
-        definition = _escape(self.definition)
-        expansion = "(%s)" % _escape(self.macro)
-        index = _find_unescaped(string, expansion)
-
-        while index > -1:
-            string = string.replace(expansion, definition)
-            index = _find_unescaped(string, expansion)
-        return string
-
-    def __str__(self):
-        return '='.join((_escape(self.macro), _escape(self.definition)))
-
-class Option:
-    """
-    option parser
-
-    this class doesn't validate the subsequent commands
-    """
-
-    def __init__(self, option = ""):
-        self.commands = ""
-        self.opts = []
-        options = list(_split_unescaped(option, '\n', 1))
-
-        if len(options) > 1:
-            self.commands = options[1]
-        options = options[0]
-        options = _split_unescaped(options, ',')
-
-        for opt in options:
-            opt = _unescape(opt).strip()
-            
-            if opt:
-                self.opts.append(opt)
-        self.commands = _unescape(self.commands).strip()
-    
-    def execute(self, options = ()):
-        """
-        execute the optional commands and return the exit code
-        if the options specify this option
-
-        return -1 if this option wasn't specified
-        """
-        for o in options:
-            if o in self.opts:
-                if self.commands:
-                    return os.system(self.commands)
-                return 0 # no command = success
-        return -1
-
-    def __str__(self):
-        return '\n'.join((", ".join((_escape(o) for o
-            in (self.shortopts + self.longopts))), _escape(self.commands)))
-
-class Path:
-    """path parser"""
-
-    def __init__(self, path = ""):
-        self.dest = path
-        self.src = path
-
-        if _find_unescaped(path, '>') > -1:
-            self.src, dest = _split_unescaped(path, '>', 1)
-
-            if dest.strip():
-                self.dest = dest
-        self.dest = _unescape(self.dest).strip()
-        self.src = _unescape(self.src).strip()
-
-        if os.path.isabs(self.dest):
-            if self.dest == self.src:
-                self.dest = os.path.basename(self.dest)
-            else:
-                raise SyntaxError("destination path cannot be absolute")
-    
-    def populate(self, srcwd, destwd = os.getcwd()):
-        """
-        srcwd/self.src -> destwd/self.dest
-        
-        complain about missing source(s) and failures
-        """
-        dest_root = os.path.join(destwd, self.dest)
-        globbed = glob.glob(os.path.join(srcwd, self.src))
-        assert globbed, "no source(s) match %s" % self.src
-        assert (not '*' in os.path.basename(self.src)
-            or '*' in os.path.basename(self.dest)), \
-            "source-only globbing isn't allowed"
-        
-        for src in globbed:
-            dest = dest_root
-            src = os.path.realpath(src)
-
-            if '*' in os.path.basename(dest):
-                dest = os.path.join(os.path.dirname(dest),
-                    os.path.basename(src))
-            dest = os.path.realpath(dest.rstrip(os.sep))
-            src = os.path.realpath(src.rstrip(os.sep))
-
-            if dest == src:
-                continue
-            print src, "->", dest
-            
-            if not os.path.exists(os.path.dirname(dest)):
-                os.makedirs(os.path.dirname(dest)) # because shutil won't
-            
-            if os.path.isdir(src):
-                shutil.copytree(src, dest)
-            else:
-                shutil.copy(src, dest)
-    
-    def __str__(self):
-        as_list = [_escape(self.src)]
-
-        if self.dest:
-            as_list.append('>')
-            as_list.append(_escape(self.dest))
-        return "".join(as_list)
-
 class Template:
-    """template parsing"""
+    def __init__(self, ops = (), paths = ()):
+        self.ops = ops
+        self.paths = paths
     
-    def __init__(self, path = ""):
-        template = ""
+    def execute_options(self, names = (), wd = os.getcwd()):
+        """execute options by name (in order of arguments)"""
+        script = ["cd \"%s\"" % wd]
+        selected = set()
+        
+        for name in names:
+            for op in self.ops:
+                if op.hasname(name) and not op in selected: # no repeats
+                    script.append(op.script)
+                    selected.union(set(op.names))
+                    break
+        
+        if len(script) > 1:
+            return os.system(os.linesep.join(script))
+        return 0 # no script
+    
+    def populate(self, dest = os.getcwd(), src = os.getcwd()):
+        """populate dest from src as needed"""
+        to_copy = []
 
-        with open(path, "rb") as fp:
-            template = fp.read()
-        self.macros = []
-        self.options = []
-        self.path = path
-        self.paths = []
-        i = 0
-        lines = list(_split_unescaped(template, '\n'))
-
-        while i < len(lines): # parse macros
-            lines[i] = self._strip_comment(lines[i]) # strip comment
-            l = lines[i]
+        for path in self.paths:
+            dp = os.path.join(dest, path.dest)
+            sp = os.path.join(src, path.src)
             
-            if _find_unescaped(l, '=') > -1:
-                self.macros.append(Macro(l))
-            i += 1
+            if os.path.normpath(dp) == os.path.normpath(sp):
+                continue
+            elif os.path.isdir(sp):
+                if os.path.exists(dp)  and not os.path.isdir(dp):
+                    raise OSError("incompatible changes" \
+                        " (non-directory -> directory)")
+                shutil.copytree(sp, dp)
+            elif os.path.isfile(sp):
+                if os.path.exists(dp):
+                    if not os.path.isfile(dp):
+                        raise OSError("incompatible changes" \
+                            " (non-file -> file)")
+                    elif not sha256file(sp) == sha256file(dp):
+                        shutil.copy(sp, dp)
+                else:
+                    shutil.copy(sp, dp)
+            else:
+                raise OSError("resource isn't a file or a directory")
 
-        for m in self.macros: # expand macros
-            for i, l in enumerate(lines):
-                lines[i] = m.expand(l)
+class TemplateAttr:
+    def __init__(self):
+        pass
+
+class TemplateOption(TemplateAttr):
+    def __init__(self, script, *names):
+        TemplateAttr.__init__(self)
+        self.names = set(names)
+        self.script = script
+
+    def hasname(self, name):
+        return name in self.names
+
+class TemplateParser:
+    ESCAPABLE = "\t\n\v\r #(:=>\\"
+    RESERVED = "\t\n\v\r #(),:=>\\"
+
+    class Preprocessor:
+        """handles uncommenting and macros, in that order"""
+        
+        @staticmethod
+        def expand_macros(line, macros):
+            """expand macros within a line"""
+            components = []
+            last_end = -1 # last encountered ')'
+            start = TemplateParser.find_unescaped('(', line)
+
+            while start > -1:
+                end = line.find(')', start + 1)
+                
+                if end == -1:
+                    break
+                macro = line[start + 1:end].strip()
+
+                if macro in macros:
+                    components += [line[last_end + 1:start], macros[macro]]
+                    last_end = end
+                start = TemplateParser.find_unescaped('(', line, start + 1)
+            components.append(line[last_end + 1:])
+            return ''.join(components)
+        
+        @staticmethod
+        def extract_macro(line):
+            """
+            return a dictionary as such: {macro: definition},
+            which may be empty
+            """
+            try:
+                macro, definition = TemplateParser.split_unescaped('=', line,
+                    1)
+            except ValueError:
+                return {}
+            return {macro: definition}
+
+        @staticmethod
+        def preprocess(lines):
+            """
+            uncomment, then identify and expand macros
+            
+            set macro definition lines to empty lines (preserves line numbers)
+            """
+            if not lines:
+                return lines
+            macros = {}
+            
+            for i, line in enumerate(lines):
+                line = lines[i] = TemplateParser.Preprocessor.uncomment(line)
+                macro_def = TemplateParser.Preprocessor.extract_macro(line)
+                
+                if macro_def:
+                    lines[i] = ""
+                    macros.update(macro_def)
+
+            for i, line in enumerate(lines): # must be separate
+                lines[i] = TemplateParser.Preprocessor.expand_macros(line,
+                    macros)
+            return lines
+        
+        @staticmethod
+        def uncomment(line):
+            """uncomment a line"""
+            comment_index = TemplateParser.find_unescaped('#', line)
+
+            if comment_index > -1:
+                return line[:comment_index]
+            return line
+    
+    @staticmethod
+    def escape(line):
+        """escape a line"""
+        if not line:
+            return line
+        chars = list(line)
+
+        for i in range(len(chars) -1, -1, -1):
+            c = chars[i]
+
+            if c in TemplateParser.ESCAPABLE:
+                chars.insert(i, '\\')
+        return "".join(chars)
+    
+    @staticmethod
+    def find_unescaped(needle, haystack, start = 0):
+        """find an unescaped needle in a haystack"""
+        if not needle:
+            return 0
+        escaped_needle = TemplateParser.escape(needle)
+        index = haystack.find(needle, start)
+        offset = len(TemplateParser.escape(needle[0])) - 1
+
+        if not offset:
+            return index
+        
+        while index > -1:
+            escaped_index = haystack.find(escaped_needle, start)
+            
+            if escaped_index == -1 or not index == escaped_index + offset:
+                break
+            index = haystack.find(needle, index + len(needle), start)
+        return index
+    
+    @staticmethod
+    def parse(string):
+        """the entry method for parsing a Template"""
+        i = 0
+        lines = TemplateParser.Preprocessor.preprocess(
+            TemplateParser.split_unescaped(os.linesep, string))
+        normalize_component = lambda c: TemplateParser.unescape(
+            TemplateParser.strip_unescaped(c))
+        ops = []
+        paths = []
+
+        while i < len(lines):
+            line = lines[i]
+            stripped = TemplateParser.strip_unescaped(line)
+
+            if not stripped:
+                pass
+            elif stripped[-1] == ':': # option
+                if stripped == ':':
+                    i += 1
+                    continue
+                i += 1
+                names = TemplateParser.split_unescaped(',', stripped[:-1])
+                script = []
+
+                while i < len(lines):
+                    line = lines[i]
+                    
+                    if line:
+                        if not line[0].isspace():
+                            i -= 1
+                            break
+                        script.append(line)
+                    i += 1
+                ops.append(TemplateOption(os.linesep.join(
+                    [normalize_component(l) for l in script]), *names))
+            else: # path
+                if stripped == '>':
+                    i += 1
+                    continue
+                elif stripped.startswith('>'):
+                    raise SyntaxError("no source in non-empty path" \
+                        " (template line %u)" % (i + 1))
+                elif TemplateParser.find_unescaped('>', stripped) == -1:
+                    src = normalize_component(stripped)
+                    paths.append(TemplatePath(src, src))
+                else:
+                    src_dest = [normalize_component(e)
+                        for e in TemplateParser.split_unescaped('>', stripped,
+                            1)]
+
+                    if not src_dest[1]:
+                        src_dest[1] = src_dest[0]
+                    paths.append(TemplatePath(*src_dest))
+            i += 1
+        return Template(ops, paths)
+    
+    @staticmethod
+    def split_unescaped(needle, haystack, nsplits = -1):
+        """
+        split a haystack around nsplits occurrences of a needle
+        
+        if nsplits < 0, split around all occurrences of a needle
+        otherwise, the haystack MUST be split exactle nsplits times
+        """
+        indices = [TemplateParser.find_unescaped(needle, haystack)]
+        split = []
+        start = 0
+
+        while not len(indices) == nsplits and not indices[-1] == -1:
+            indices.append(TemplateParser.find_unescaped(needle, haystack,
+                indices[-1] + len(needle)))
+
+        if indices[-1] == -1:
+            indices.pop()
+        
+        if nsplits >= 0 and not len(indices) == nsplits:
+            raise ValueError("not enough splits")
+        elif not indices:
+            return [haystack]
+
+        for i in indices:
+            split.append(haystack[start:i])
+            start = i + len(needle)
+        split.append(haystack[indices[-1] + len(needle):])
+        return split
+
+    @staticmethod
+    def strip_unescaped(string, to_strip = "\t\n\v\r "):
+        """strip unescaped characters"""
+        if len(string) < 2:
+            return string
+        back_offset = front_offset = 0
+        string = string.lstrip(to_strip) # take care of leading characters
+        to_strip = set(to_strip)
+        
+        for i in range(1, len(string)):
+            if string[i - 1] == '\\' or not string[i] in to_strip:
+                break
+            front_offset += 1
+
+        if front_offset == len(to_strip) - 1:
+            return string[front_offset:]
+
+        for i in range(len(string) - 2, front_offset + 1, -1):
+            if string[i] == '\\' or not string[i + 1] in to_strip:
+                break
+            back_offset += 1
+        return string[front_offset:len(string) - back_offset]
+    
+    @staticmethod
+    def unescape(line):
+        """unescape a line"""
+        if len(line) < 2:
+            return line
+        chars = list(line)
         i = 0
         
-        while i < len(lines):
-            l = lines[i]
+        while i < len(chars) - 1:
+            if chars[i] == '\\' and chars[i + 1] in TemplateParser.ESCAPABLE:
+                del chars[i]
+            else:
+                i += 1
+        return "".join(chars)
 
-            if _find_unescaped(l, '=') > -1: # skip macros
-                pass
-            elif _find_unescaped(l, ',') > -1: # option
-                option_lines = [l]
-
-                while i < len(lines) - 1: # changing i and l saves time
-                    l = lines[i + 1] # prevents skipping the first non-opt line
-                    
-                    if l.strip():
-                        if not l[0].isspace():
-                            break
-                        option_lines.append(l)
-                    i += 1
-                self.options.append(Option('\n'.join(option_lines)))
-            elif _unescape(l).strip(): # path
-                self.paths.append(Path(l))
-            i += 1
-
-    def execute(self, wd = os.getcwd(), options = ()):
-        """execute the template with options"""
-        old_wd = os.getcwd()
-        os.chdir(wd)
-        
-        for o in self.options:
-            o.execute(options)
-        os.chdir(old_wd)
-    
-    def populate(self, destwd = os.getcwd(), overwrite = False):
-        """populate and return the destwd/(title) with the template contents"""
-        srcwd = os.path.dirname(self.path)
-
-        if os.path.realpath(destwd) == os.path.realpath(srcwd): # unnecessary
-            return destwd
-        
-        for m in self.macros:
-            if m.macro == "title" and m.definition:
-                destwd = os.path.join(destwd, m.definition)
-                break
-
-        for m in self.macros:
-            if m.macro == "wd" and m.definition:
-                srcwd = os.path.join(srcwd, m.definition)
-                break
-        
-        if os.path.exists(destwd):
-            assert overwrite, "destination exists"
-        else:
-            os.makedirs(destwd)
-        
-        for p in self.paths:
-            p.populate(srcwd, destwd)
-        return destwd
-
-    def __str__(self):
-        return '\n'.join((str(e) for e in (self.macros + self.paths
-            + self.options)))
-    
-    def _strip_comment(self, line = ""):
-        """remove the comment from a line"""
-        index = _find_unescaped(line, '#')
-
-        if index > -1:
-            return line[:index]
-        return line
+class TemplatePath(TemplateAttr):
+    def __init__(self, src, dest):
+        TemplateAttr.__init__(self)
+        self.dest = dest
+        self.src = src
 
 if __name__ == "__main__":
     main()
